@@ -11,7 +11,49 @@ import java.nio.file.*;
 import java.util.*;
 import java.util.stream.Collectors;
 
-
+@Service
 public class KnowledgeService {
+    private final TopicRepository topics; private final KnowledgeRepositoryRepository docs; private final Path base;
+    public KnowledgeService(TopicRepository topics,KnowledgeRepositoryRepository docs,
+                            @Value("${app.knowledge.base-dir:./knowledge}") String baseDir){
+        this.topics=topics;this.docs=docs;this.base=Paths.get(baseDir).toAbsolutePath().normalize();
+    }
+    public record Result(String topic,String source,String content){}
+    public Optional<Result> retrieve(String prompt,String technology,String framework){
+        String q=(prompt+" "+Objects.toString(technology,"")+" "+Objects.toString(framework,"")).toLowerCase();
+        System.out.println("PROMPT = " + prompt);
+        System.out.println("QUERY = " + q);
+        System.out.println("TOPICS = " +
+                topics.findAll().stream()
+                        .map(Topic::getTopicName)
+                        .toList());
+        Topic best=topics.findAll().stream()
+                .filter(t->q.contains(t.getTopicName().toLowerCase()))
+                .findFirst().orElse(null);
 
+        if(best==null){
+            System.out.println("no topic ");
+            return Optional.empty();
+        }
+        System.out.println("topic found:"+best.getTopicName());
+
+        List<KnowledgeRepository> rs=docs.findByTopic_TopicId(best.getTopicId());
+        String content=rs.stream().map(this::read).filter(s->!s.isBlank()).collect(Collectors.joining("\n\n--- SOURCE ---\n\n"));
+        if(content.isBlank()) {
+            System.out.println("Topic found empty file");
+            return Optional.empty();
+        }
+        System.out.println("content found");
+        return Optional.of(new Result(best.getTopicName(),rs.get(0).getDocumentName(),content));
+    }
+    private String read(KnowledgeRepository d){
+        try{
+            Path p=Paths.get(d.getFilePath()); if(!p.isAbsolute())p=base.resolve(p).normalize();
+            if(!Files.exists(p))return "";
+            if(p.toString().toLowerCase().endsWith(".pdf")){
+                try(var pdf=Loader.loadPDF(p.toFile())){return new PDFTextStripper().getText(pdf);}
+            }
+            return Files.readString(p,StandardCharsets.UTF_8);
+        }catch(Exception e){return "";}
+    }
 }
